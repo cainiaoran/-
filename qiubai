@@ -1,0 +1,66 @@
+import re
+from bs4 import BeautifulSoup
+import requests
+from pymongo import MongoClient
+
+class qiubai():
+    def __init__(self):
+    #初始化mongodb
+        self.client=MongoClient('localhost',27017)
+        self.db=self.client['JOKE']
+        self.table=self.db['joke']
+        self.count=1
+    #html解析器，如果解析成功返回html.text
+    def parse(self,url):
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/534.50 (KHTML, like Gecko) Version/5.1 Safari/534.50'}
+        html=requests.get(url,headers=headers)
+        if html.status_code==200:
+            return html.text
+        else:
+            return None
+    #在制作的过程中发现把评论down下来也不错，于是就从主页中把详细页的url存下来，然后一个一个去请求。
+    def token_extractor(self,html_text):
+        tokens=[]
+        pattern=re.compile(r'<a href="/article/(\d+)" target="_blank"',re.S)
+        contents=re.findall(pattern,html_text)
+        for content in contents:
+            tokens.append(content)
+        return tokens
+    #把笑话内容和评论还有点赞都down下来，制作成DICT格式，便于存储到数据库中。
+    def content_extractor(self,token):
+        url='https://www.qiushibaike.com/article/'+str(token)
+        html_text=self.parse(url)
+        soup=BeautifulSoup(html_text,'html.parser')
+        laugh=soup.find('div',class_='stats').find('span',class_='stats-vote').find('i').get_text()
+        content=soup.find('div',class_='content').get_text()
+        try:
+            comments=soup.find('div',class_='comments-list clearfix').find_all('span')
+        except:
+            comments=[]
+        commentss=[]
+        for comment in comments:
+            commentss.append(comment.get_text())
+        dic={
+            'laugh':laugh,
+            'joke':content,
+            'comments':commentss
+        }
+        return dic
+    #主函数，初始化并且循环爬取/TEXT/下面的页面内容
+    def main(self):
+        for i in range(1,12):
+            url='https://www.qiushibaike.com/text/page/'+str(i)+'/'
+            html_text=self.parse(url)
+            if html_text is not None:
+                for content in self.token_extractor(html_text):
+                    dic=self.content_extractor(content)
+                    if self.table.update({'joke':dic['joke']},{'$set':dic},upsert=True):
+                        print('{0} value successfully inserted!'.format(self.count))
+                        self.count += 1
+                    else:
+                        print('failed insert')
+#初始化类，开始爬取
+if __name__=="__main__":
+    qiubai=qiubai()
+    qiubai.main()
